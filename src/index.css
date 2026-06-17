@@ -308,6 +308,37 @@ button { font-family: inherit; cursor: pointer; }
 }
 .track-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 
+.track-fx {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+}
+.fx { display: flex; flex-direction: column; gap: 6px; }
+.fx span { font-size: 12px; color: var(--text-faint); }
+.fx span b { color: var(--text); font-variant-numeric: tabular-nums; }
+.fx-vol { flex: 1; min-width: 180px; }
+.fx-vol input[type='range'] {
+  width: 100%; accent-color: var(--accent, var(--brand)); cursor: pointer; height: 4px;
+}
+
+/* 내보내기 형식 툴바 */
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  margin-top: 16px; padding: 12px 16px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.toolbar-label { font-size: 13px; color: var(--text-dim); font-weight: 600; }
+.seg { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
+.seg button {
+  padding: 6px 16px; border: none; background: transparent; border-radius: 8px;
+  color: var(--text-dim); font-size: 13px; font-weight: 600;
+}
+.seg button.on { background: var(--brand); color: #fff; }
+.bitrate { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.bitrate select {
+  padding: 7px 10px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg-soft); color: var(--text); font-size: 13px; cursor: pointer;
+}
+
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 9px 15px; border-radius: 11px; border: 1px solid transparent;
@@ -332,7 +363,7 @@ button { font-family: inherit; cursor: pointer; }
 .checkbox input { width: 17px; height: 17px; accent-color: var(--brand); cursor: pointer; }
 .merge-info { font-size: 14px; color: var(--text-dim); }
 .merge-info strong { color: var(--text); font-variant-numeric: tabular-nums; }
-.merge-bar .btn { margin-left: auto; }
+.merge-bar .checkbox { margin-right: auto; }
 
 .result {
   margin-top: 24px; padding: 20px; border-radius: var(--radius);
@@ -348,7 +379,8 @@ button { font-family: inherit; cursor: pointer; }
 
 @media (max-width: 640px) {
   .track-actions { margin-left: 0; width: 100%; }
-  .merge-bar .btn { margin-left: 0; width: 100%; justify-content: center; }
+  .merge-bar .checkbox { margin-right: 0; width: 100%; }
+  .merge-bar .btn { flex: 1; justify-content: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,9 +4,11 @@ import Icon from '../components/Icon.jsx'
 import Waveform from '../components/Waveform.jsx'
 import { useTheme } from '../theme.jsx'
 import {
-  sliceBuffer,
+  renderRegion,
   concatBuffers,
+  mixBuffers,
   encodeWav,
+  encodeMp3,
   downloadBlob,
   formatTime,
   round3,
@@ -25,11 +27,13 @@ export default function AudioEditor() {
   const inputRef = useRef(null)
 
   const [tracks, setTracks] = useState([])
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState(null) // { buffer, base }
   const [useSelection, setUseSelection] = useState(true)
+  const [format, setFormat] = useState('mp3') // 'mp3' | 'wav'
+  const [bitrate, setBitrate] = useState(192)
   const [busy, setBusy] = useState(null)
   const [dragOver, setDragOver] = useState(false)
-  const [playing, setPlaying] = useState(null) // 재생 중인 id (또는 'result')
+  const [playing, setPlaying] = useState(null) // 재생 중 id (또는 'result')
   const [pos, setPos] = useState(0)
 
   const getCtx = () => {
@@ -40,9 +44,9 @@ export default function AudioEditor() {
     return ctxRef.current
   }
 
-  useEffect(() => () => stop(), []) // 언마운트 시 재생 정지
+  useEffect(() => () => stop(), [])
 
-  // ---------- 재생 ----------
+  // ---------- 재생 (볼륨/페이드 반영) ----------
   function stop() {
     if (srcRef.current) {
       try {
@@ -58,21 +62,41 @@ export default function AudioEditor() {
     setPlaying(null)
   }
 
-  function play(id, buffer, start = 0, end = null) {
+  function play(id, opt) {
+    const { buffer, start = 0, end = null, volume = 1, fadeIn = 0, fadeOut = 0 } = opt
     const ctx = getCtx()
     ctx.resume?.()
     stop()
     const src = ctx.createBufferSource()
     src.buffer = buffer
-    src.connect(ctx.destination)
+    const gain = ctx.createGain()
+    src.connect(gain)
+    gain.connect(ctx.destination)
+
     const realEnd = end == null ? buffer.duration : end
     const dur = Math.max(0.01, realEnd - start)
-    const t0 = ctx.currentTime
+    const now = ctx.currentTime
+    const fi = clamp(fadeIn, 0, dur)
+    const fo = clamp(fadeOut, 0, dur)
+    const g = gain.gain
+    g.cancelScheduledValues(now)
+    if (fi > 0) {
+      g.setValueAtTime(0.0001, now)
+      g.linearRampToValueAtTime(volume, now + fi)
+    } else {
+      g.setValueAtTime(volume, now)
+    }
+    if (fo > 0) {
+      g.setValueAtTime(volume, now + Math.max(0, dur - fo))
+      g.linearRampToValueAtTime(0.0001, now + dur)
+    }
+
     src.start(0, start, dur)
     srcRef.current = src
     setPlaying(id)
     setPos(start)
     src.onended = () => stop()
+    const t0 = ctx.currentTime
     const tick = () => {
       const el = ctx.currentTime - t0
       setPos(start + el)
@@ -81,9 +105,18 @@ export default function AudioEditor() {
     rafRef.current = requestAnimationFrame(tick)
   }
 
-  function togglePlay(id, buffer, start, end) {
-    if (playing === id) stop()
-    else play(id, buffer, start, end)
+  const trackOpts = (t) => ({
+    buffer: t.buffer,
+    start: t.start,
+    end: t.end,
+    volume: t.volume,
+    fadeIn: t.fadeIn,
+    fadeOut: t.fadeOut,
+  })
+
+  function toggleTrackPlay(t) {
+    if (playing === t.id) stop()
+    else play(t.id, trackOpts(t))
   }
 
   // ---------- 파일 추가 ----------
@@ -99,13 +132,15 @@ export default function AudioEditor() {
       try {
         const arr = await f.arrayBuffer()
         const buffer = await ctx.decodeAudioData(arr)
-        const dur = round3(buffer.duration)
         added.push({
           id: ++idRef.current,
           name: f.name,
           buffer,
           start: 0,
-          end: dur,
+          end: round3(buffer.duration),
+          volume: 1,
+          fadeIn: 0,
+          fadeOut: 0,
           accent: ACCENTS[idRef.current % ACCENTS.length],
         })
       } catch (err) {
@@ -124,6 +159,9 @@ export default function AudioEditor() {
   }
 
   // ---------- 트랙 조작 ----------
+  const patch = (id, fields) =>
+    setTracks((ts) => ts.map((t) => (t.id === id ? { ...t, ...fields } : t)))
+
   function setSelection(id, s, e) {
     setTracks((ts) =>
       ts.map((t) => {
@@ -136,24 +174,15 @@ export default function AudioEditor() {
       }),
     )
   }
-  const setStart = (id, v) =>
-    setTracks((ts) =>
-      ts.map((t) => (t.id === id ? { ...t, start: clamp(round3(v || 0), 0, t.end) } : t)),
-    )
-  const setEnd = (id, v) =>
-    setTracks((ts) =>
-      ts.map((t) =>
-        t.id === id ? { ...t, end: clamp(round3(v || 0), t.start, t.buffer.duration) } : t,
-      ),
-    )
-  const resetSel = (id) =>
-    setTracks((ts) => ts.map((t) => (t.id === id ? { ...t, start: 0, end: round3(t.buffer.duration) } : t)))
+  const setStart = (id, v, t) => patch(id, { start: clamp(round3(v || 0), 0, t.end) })
+  const setEnd = (id, v, t) => patch(id, { end: clamp(round3(v || 0), t.start, t.buffer.duration) })
+  const resetSel = (t) => patch(t.id, { start: 0, end: round3(t.buffer.duration) })
+  const setFade = (id, key, v, selLen) => patch(id, { [key]: clamp(round3(v || 0), 0, selLen) })
 
   function removeTrack(id) {
     if (playing === id) stop()
     setTracks((ts) => ts.filter((t) => t.id !== id))
   }
-
   function moveTrack(id, dir) {
     setTracks((ts) => {
       const i = ts.findIndex((t) => t.id === id)
@@ -165,30 +194,52 @@ export default function AudioEditor() {
     })
   }
 
-  // ---------- 자르기 / 합치기 ----------
-  function cutAndDownload(t) {
-    const out = sliceBuffer(getCtx(), t.buffer, t.start, t.end)
-    downloadBlob(encodeWav(out), `${stripExt(t.name)}_${t.start.toFixed(3)}-${t.end.toFixed(3)}.wav`)
+  // ---------- 내보내기 ----------
+  function renderTrackBuffer(t, whole) {
+    return renderRegion(getCtx(), t.buffer, {
+      start: whole ? 0 : t.start,
+      end: whole ? t.buffer.duration : t.end,
+      volume: t.volume,
+      fadeIn: t.fadeIn,
+      fadeOut: t.fadeOut,
+    })
   }
 
-  function previewResult(t) {
-    const out = sliceBuffer(getCtx(), t.buffer, t.start, t.end)
-    setResult({ buffer: out, name: `${stripExt(t.name)}_cut.wav` })
+  async function exportBuffer(buffer, base) {
+    if (format === 'mp3') {
+      setBusy('MP3 인코딩 중…')
+      await new Promise((r) => setTimeout(r, 30))
+      downloadBlob(await encodeMp3(buffer, bitrate), `${base}.mp3`)
+      setBusy(null)
+    } else {
+      downloadBlob(encodeWav(buffer), `${base}.wav`)
+    }
   }
 
-  async function mergeTracks() {
-    if (tracks.length < 1) return
-    setBusy('합치는 중…')
+  function cutTrack(t) {
+    exportBuffer(renderTrackBuffer(t, false), `${stripExt(t.name)}_${t.start.toFixed(3)}-${t.end.toFixed(3)}`)
+  }
+  function sendToResult(t) {
+    setResult({ buffer: renderTrackBuffer(t, false), base: `${stripExt(t.name)}_cut` })
+  }
+
+  async function combine(mode) {
+    if (tracks.length < 2) return
+    setBusy(mode === 'mix' ? '겹치는 중…' : '이어붙이는 중…')
     await new Promise((r) => setTimeout(r, 30))
     const ctx = getCtx()
-    const bufs = tracks.map((t) => (useSelection ? sliceBuffer(ctx, t.buffer, t.start, t.end) : t.buffer))
-    const out = concatBuffers(ctx, bufs)
-    setResult({ buffer: out, name: `merged_${tracks.length}tracks.wav` })
+    const bufs = tracks.map((t) => renderTrackBuffer(t, !useSelection))
+    const out = mode === 'mix' ? mixBuffers(ctx, bufs) : concatBuffers(ctx, bufs)
+    setResult({ buffer: out, base: `${mode === 'mix' ? 'overlay' : 'merged'}_${tracks.length}tracks` })
     setBusy(null)
   }
 
   const totalDuration = tracks.reduce(
     (s, t) => s + (useSelection ? t.end - t.start : t.buffer.duration),
+    0,
+  )
+  const maxDuration = tracks.reduce(
+    (m, t) => Math.max(m, useSelection ? t.end - t.start : t.buffer.duration),
     0,
   )
 
@@ -225,8 +276,8 @@ export default function AudioEditor() {
             <span className="gradient-text">노래 편집기</span>
           </h1>
           <p className="editor-sub">
-            파일을 올려 파형에서 구간을 드래그하거나 숫자(소수 3자리·ms)로 정확히 자르고, 여러 곡을 순서대로
-            이어 붙일 수 있어요. 모든 처리는 브라우저 안에서만 이뤄집니다.
+            파일을 올려 구간을 자르고(ms 단위), 볼륨·페이드를 조절하고, 여러 곡을 이어붙이거나 겹쳐서
+            MP3·WAV로 저장하세요. 모든 처리는 브라우저 안에서만 이뤄집니다.
           </p>
         </div>
 
@@ -257,6 +308,32 @@ export default function AudioEditor() {
           />
         </div>
 
+        {/* 내보내기 형식 */}
+        {tracks.length > 0 && (
+          <div className="toolbar">
+            <span className="toolbar-label">내보내기 형식</span>
+            <div className="seg">
+              <button className={format === 'mp3' ? 'on' : ''} onClick={() => setFormat('mp3')}>
+                MP3
+              </button>
+              <button className={format === 'wav' ? 'on' : ''} onClick={() => setFormat('wav')}>
+                WAV
+              </button>
+            </div>
+            {format === 'mp3' && (
+              <label className="bitrate">
+                품질
+                <select value={bitrate} onChange={(e) => setBitrate(Number(e.target.value))}>
+                  <option value={128}>128 kbps</option>
+                  <option value={192}>192 kbps</option>
+                  <option value={256}>256 kbps</option>
+                  <option value={320}>320 kbps</option>
+                </select>
+              </label>
+            )}
+          </div>
+        )}
+
         {busy && (
           <div className="busy">
             <span className="spinner" /> {busy}
@@ -274,7 +351,8 @@ export default function AudioEditor() {
                 <div className="track-meta">
                   <strong title={t.name}>{t.name}</strong>
                   <span>
-                    길이 {formatTime(t.buffer.duration)} · {t.buffer.numberOfChannels === 1 ? '모노' : '스테레오'} ·{' '}
+                    길이 {formatTime(t.buffer.duration)} ·{' '}
+                    {t.buffer.numberOfChannels === 1 ? '모노' : '스테레오'} ·{' '}
                     {(t.buffer.sampleRate / 1000).toFixed(1)}kHz
                   </span>
                 </div>
@@ -314,7 +392,7 @@ export default function AudioEditor() {
                     min="0"
                     max={t.buffer.duration}
                     value={t.start}
-                    onChange={(e) => setStart(t.id, parseFloat(e.target.value))}
+                    onChange={(e) => setStart(t.id, parseFloat(e.target.value), t)}
                   />
                 </label>
                 <label className="field">
@@ -325,35 +403,70 @@ export default function AudioEditor() {
                     min="0"
                     max={t.buffer.duration}
                     value={t.end}
-                    onChange={(e) => setEnd(t.id, parseFloat(e.target.value))}
+                    onChange={(e) => setEnd(t.id, parseFloat(e.target.value), t)}
                   />
                 </label>
                 <span className="sel-len">선택 {formatTime(Math.max(0, selLen))}</span>
-
                 <div className="track-actions">
-                  <button className="btn ghost" onClick={() => resetSel(t.id)}>
+                  <button className="btn ghost" onClick={() => resetSel(t)}>
                     전체 선택
                   </button>
-                  <button
-                    className="btn ghost"
-                    onClick={() => togglePlay(t.id, t.buffer, t.start, t.end)}
-                  >
+                  <button className="btn ghost" onClick={() => toggleTrackPlay(t)}>
                     <Icon name={isPlaying ? 'pause' : 'play'} size={16} /> {isPlaying ? '정지' : '구간 재생'}
                   </button>
-                  <button className="btn ghost" onClick={() => previewResult(t)}>
+                  <button className="btn ghost" onClick={() => sendToResult(t)}>
                     <Icon name="scissors" size={16} /> 결과로 보내기
                   </button>
-                  <button className="btn" onClick={() => cutAndDownload(t)}>
+                  <button className="btn" onClick={() => cutTrack(t)}>
                     <Icon name="download" size={16} /> 잘라서 저장
                   </button>
                 </div>
+              </div>
+
+              {/* 볼륨 · 페이드 */}
+              <div className="track-fx">
+                <label className="fx fx-vol">
+                  <span>
+                    볼륨 <b>{Math.round(t.volume * 100)}%</b>
+                  </span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.05"
+                    value={t.volume}
+                    onChange={(e) => patch(t.id, { volume: Number(e.target.value) })}
+                  />
+                </label>
+                <label className="field">
+                  <span>페이드 인 (초)</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max={selLen}
+                    value={t.fadeIn}
+                    onChange={(e) => setFade(t.id, 'fadeIn', parseFloat(e.target.value), selLen)}
+                  />
+                </label>
+                <label className="field">
+                  <span>페이드 아웃 (초)</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max={selLen}
+                    value={t.fadeOut}
+                    onChange={(e) => setFade(t.id, 'fadeOut', parseFloat(e.target.value), selLen)}
+                  />
+                </label>
               </div>
             </div>
           )
         })}
 
-        {/* 합치기 */}
-        {tracks.length >= 1 && (
+        {/* 합치기 / 겹치기 */}
+        {tracks.length >= 2 && (
           <div className="merge-bar">
             <label className="checkbox">
               <input
@@ -361,13 +474,13 @@ export default function AudioEditor() {
                 checked={useSelection}
                 onChange={(e) => setUseSelection(e.target.checked)}
               />
-              <span>선택 구간만 사용 (체크 해제 시 곡 전체)</span>
+              <span>선택 구간만 사용 (해제 시 곡 전체)</span>
             </label>
-            <span className="merge-info">
-              위 순서대로 이어붙이면 약 <strong>{formatTime(Math.max(0, totalDuration))}</strong>
-            </span>
-            <button className="btn big" onClick={mergeTracks} disabled={tracks.length < 2}>
-              <Icon name="merge" size={18} /> {tracks.length}곡 합치기 → 결과 만들기
+            <button className="btn ghost big" onClick={() => combine('concat')}>
+              <Icon name="merge" size={18} /> 이어붙이기 ({formatTime(Math.max(0, totalDuration))})
+            </button>
+            <button className="btn big" onClick={() => combine('mix')}>
+              <Icon name="layers" size={18} /> 겹치기 ({formatTime(Math.max(0, maxDuration))})
             </button>
           </div>
         )}
@@ -380,8 +493,10 @@ export default function AudioEditor() {
                 <Icon name="wave" size={20} /> 결과
               </h2>
               <span>
-                {formatTime(result.buffer.duration)} · WAV ·{' '}
-                {result.buffer.numberOfChannels === 1 ? '모노' : '스테레오'}
+                {formatTime(result.buffer.duration)} ·{' '}
+                {result.buffer.numberOfChannels === 1 ? '모노' : '스테레오'} ·{' '}
+                {format.toUpperCase()}
+                {format === 'mp3' ? ` ${bitrate}k` : ''}
               </span>
             </div>
             <Waveform
@@ -396,13 +511,17 @@ export default function AudioEditor() {
             <div className="result-actions">
               <button
                 className="btn ghost"
-                onClick={() => togglePlay('result', result.buffer, 0, result.buffer.duration)}
+                onClick={() =>
+                  playing === 'result'
+                    ? stop()
+                    : play('result', { buffer: result.buffer, start: 0, end: result.buffer.duration })
+                }
               >
                 <Icon name={playing === 'result' ? 'pause' : 'play'} size={16} />{' '}
                 {playing === 'result' ? '정지' : '재생'}
               </button>
-              <button className="btn" onClick={() => downloadBlob(encodeWav(result.buffer), result.name)}>
-                <Icon name="download" size={16} /> WAV 다운로드
+              <button className="btn" onClick={() => exportBuffer(result.buffer, result.base)}>
+                <Icon name="download" size={16} /> {format.toUpperCase()} 다운로드
               </button>
             </div>
           </div>

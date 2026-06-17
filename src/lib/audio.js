@@ -1,4 +1,5 @@
-// 브라우저 Web Audio API 기반 오디오 처리 유틸 (외부 의존성 없음)
+// 브라우저 Web Audio API 기반 오디오 처리 유틸
+// (MP3 인코더는 용량이 커서 실제 내보낼 때 동적 import로 불러옵니다)
 
 export const round3 = (n) => Math.round(n * 1000) / 1000
 export const clamp = (n, min, max) => Math.min(max, Math.max(min, n))
@@ -38,6 +39,59 @@ export function sliceBuffer(ctx, buffer, start, end) {
   const out = ctx.createBuffer(buffer.numberOfChannels, len, sr)
   for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
     out.getChannelData(ch).set(buffer.getChannelData(ch).subarray(s, e))
+  }
+  return out
+}
+
+// 구간을 자른 뒤 볼륨·페이드를 적용한 새 버퍼를 반환.
+// opts: { start, end, volume=1, fadeIn=0, fadeOut=0 } (초 단위)
+export function renderRegion(ctx, buffer, opts) {
+  const { start, end, volume = 1, fadeIn = 0, fadeOut = 0 } = opts
+  const out = sliceBuffer(ctx, buffer, start, end)
+  const sr = out.sampleRate
+  const len = out.length
+  const fiN = Math.min(len, Math.max(0, Math.floor(fadeIn * sr)))
+  const foN = Math.min(len, Math.max(0, Math.floor(fadeOut * sr)))
+  for (let ch = 0; ch < out.numberOfChannels; ch++) {
+    const data = out.getChannelData(ch)
+    for (let i = 0; i < len; i++) {
+      let g = volume
+      if (fiN > 0 && i < fiN) g *= i / fiN // 페이드 인 (선형)
+      if (foN > 0 && i >= len - foN) g *= (len - i) / foN // 페이드 아웃
+      data[i] *= g
+    }
+  }
+  return out
+}
+
+// 여러 버퍼를 동시에 겹쳐 믹스. 길이는 가장 긴 트랙 기준.
+// normalize: 합산 결과가 ±1을 넘으면 전체를 줄여 클리핑(찢어짐)을 방지.
+export function mixBuffers(ctx, buffers, { normalize = true } = {}) {
+  const list = buffers.filter(Boolean)
+  if (!list.length) return null
+  const numCh = Math.max(...list.map((b) => b.numberOfChannels))
+  const sr = list[0].sampleRate
+  const maxLen = Math.max(...list.map((b) => b.length))
+  const out = ctx.createBuffer(numCh, Math.max(1, maxLen), sr)
+  let peak = 0
+  for (let ch = 0; ch < numCh; ch++) {
+    const od = out.getChannelData(ch)
+    for (const b of list) {
+      const srcCh = ch < b.numberOfChannels ? ch : 0
+      const sd = b.getChannelData(srcCh)
+      for (let i = 0; i < sd.length; i++) od[i] += sd[i]
+    }
+    for (let i = 0; i < od.length; i++) {
+      const a = Math.abs(od[i])
+      if (a > peak) peak = a
+    }
+  }
+  if (normalize && peak > 1) {
+    const scale = 1 / peak
+    for (let ch = 0; ch < numCh; ch++) {
+      const od = out.getChannelData(ch)
+      for (let i = 0; i < od.length; i++) od[i] *= scale
+    }
   }
   return out
 }
@@ -100,6 +154,38 @@ export function encodeWav(buffer) {
     }
   }
   return new Blob([view], { type: 'audio/wav' })
+}
+
+// Float32 샘플 → Int16Array
+function floatToInt16(input) {
+  const out = new Int16Array(input.length)
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]))
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff
+  }
+  return out
+}
+
+// AudioBuffer → MP3 Blob (lamejs). kbps: 128 / 192 / 320 등
+export async function encodeMp3(buffer, kbps = 192) {
+  const { Mp3Encoder } = await import('@breezystack/lamejs')
+  const numCh = Math.min(2, buffer.numberOfChannels)
+  const sr = buffer.sampleRate
+  const enc = new Mp3Encoder(numCh, sr, kbps)
+  const left = floatToInt16(buffer.getChannelData(0))
+  const right = numCh > 1 ? floatToInt16(buffer.getChannelData(1)) : null
+  const blockSize = 1152
+  const chunks = []
+  for (let i = 0; i < left.length; i += blockSize) {
+    const l = left.subarray(i, i + blockSize)
+    const buf = right
+      ? enc.encodeBuffer(l, right.subarray(i, i + blockSize))
+      : enc.encodeBuffer(l)
+    if (buf.length) chunks.push(new Uint8Array(buf))
+  }
+  const end = enc.flush()
+  if (end.length) chunks.push(new Uint8Array(end))
+  return new Blob(chunks, { type: 'audio/mpeg' })
 }
 
 // hex 색상에 알파 적용

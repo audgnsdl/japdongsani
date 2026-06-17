@@ -81,6 +81,7 @@ const paths = {
   down: <path d="m6 10 6 6 6-6" />,
   wave: <path d="M3 12h2l2-6 3 14 3-18 3 14 2-4h3" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  layers: <path d="m12 3 9 5-9 5-9-5 9-5Zm9 9-9 5-9-5m18 4-9 5-9-5" />,
 }
 
 export default function Icon({ name, size = 24, strokeWidth = 1.75, ...rest }) {
