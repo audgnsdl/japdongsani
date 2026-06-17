@@ -5,6 +5,7 @@
 
 export const categories = [
   { key: 'all', label: '전체' },
+  { key: 'audio', label: '오디오' },
   { key: 'text', label: '텍스트' },
   { key: 'convert', label: '변환' },
   { key: 'calc', label: '계산' },
@@ -14,6 +15,16 @@ export const categories = [
 ]
 
 export const tools = [
+  {
+    id: 'audio-editor',
+    title: '노래 편집기',
+    desc: '여러 곡을 올려 구간을 자르고(ms 단위) 이어 붙여 저장',
+    category: 'audio',
+    icon: 'wave',
+    accent: '#22c55e',
+    status: 'ready',
+    href: '#/tools/audio-editor',
+  },
   {
     id: 'unit-converter',
     title: '단위 변환기',
