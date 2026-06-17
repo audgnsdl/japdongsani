@@ -365,6 +365,61 @@ button { font-family: inherit; cursor: pointer; }
 .merge-info strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .merge-bar .checkbox { margin-right: auto; }
 
+/* 믹스 타임라인 */
+.mix-section {
+  margin-top: 16px; padding: 18px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--border);
+}
+.mix-head { margin-bottom: 14px; }
+.mix-head h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 16px; }
+.mix-head span { font-size: 13px; color: var(--text-faint); }
+
+.mixline { display: flex; flex-direction: column; gap: 8px; }
+.mixline-ruler {
+  position: relative; height: 20px; margin-left: 132px;
+  border-bottom: 1px solid var(--border);
+}
+.mixline-ruler .tick {
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mixline-ruler .tick::after {
+  content: ''; position: absolute; left: 50%; top: 14px; width: 1px; height: 6px;
+  background: var(--border-strong);
+}
+.mixline-row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 0; }
+.mixline-side { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
+.mixline-side input {
+  width: 78px; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg-soft); color: var(--text);
+  font-size: 12px; font-variant-numeric: tabular-nums; outline: none;
+}
+.mixline-side input:focus { border-color: var(--ring); }
+.mixline-lane {
+  position: relative; height: 40px; border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
+  border: 1px solid var(--border); overflow: hidden;
+}
+.clip {
+  position: absolute; top: 4px; bottom: 4px; min-width: 8px;
+  border-radius: 7px; cursor: grab; touch-action: none;
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  border: 1px solid var(--accent);
+  display: flex; align-items: center; padding: 0 8px;
+  transition: filter 0.15s ease;
+}
+.clip:hover { filter: brightness(1.12); }
+.clip.is-drag { cursor: grabbing; filter: brightness(1.2); z-index: 2; }
+.clip-label {
+  font-size: 11px; color: var(--text); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+}
+.mix-foot {
+  display: flex; align-items: center; gap: 14px; margin-top: 16px;
+}
+.mix-foot .merge-info { margin-right: auto; }
+
 .result {
   margin-top: 24px; padding: 20px; border-radius: var(--radius);
   background: color-mix(in srgb, #22c55e 7%, var(--surface));
@@ -381,6 +436,10 @@ button { font-family: inherit; cursor: pointer; }
   .track-actions { margin-left: 0; width: 100%; }
   .merge-bar .checkbox { margin-right: 0; width: 100%; }
   .merge-bar .btn { flex: 1; justify-content: center; }
+  .mixline-ruler { margin-left: 96px; }
+  .mixline-row { grid-template-columns: 96px 1fr; }
+  .mixline-side input { width: 56px; }
+  .mix-foot .btn { flex: 1; justify-content: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

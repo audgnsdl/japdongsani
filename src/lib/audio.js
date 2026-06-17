@@ -64,22 +64,27 @@ export function renderRegion(ctx, buffer, opts) {
   return out
 }
 
-// 여러 버퍼를 동시에 겹쳐 믹스. 길이는 가장 긴 트랙 기준.
+// 여러 버퍼를 각자의 시작 위치(offset, 초)에 얹어 믹스.
+// items: [{ buffer, offset }] · 길이는 가장 늦게 끝나는 트랙 기준.
 // normalize: 합산 결과가 ±1을 넘으면 전체를 줄여 클리핑(찢어짐)을 방지.
-export function mixBuffers(ctx, buffers, { normalize = true } = {}) {
-  const list = buffers.filter(Boolean)
+export function mixBuffersAt(ctx, items, { normalize = true } = {}) {
+  const list = items.filter((it) => it && it.buffer)
   if (!list.length) return null
-  const numCh = Math.max(...list.map((b) => b.numberOfChannels))
-  const sr = list[0].sampleRate
-  const maxLen = Math.max(...list.map((b) => b.length))
-  const out = ctx.createBuffer(numCh, Math.max(1, maxLen), sr)
+  const sr = list[0].buffer.sampleRate
+  const numCh = Math.max(...list.map((it) => it.buffer.numberOfChannels))
+  const totalLen = Math.max(
+    ...list.map((it) => Math.floor(Math.max(0, it.offset || 0) * sr) + it.buffer.length),
+  )
+  const out = ctx.createBuffer(numCh, Math.max(1, totalLen), sr)
   let peak = 0
   for (let ch = 0; ch < numCh; ch++) {
     const od = out.getChannelData(ch)
-    for (const b of list) {
+    for (const it of list) {
+      const b = it.buffer
       const srcCh = ch < b.numberOfChannels ? ch : 0
       const sd = b.getChannelData(srcCh)
-      for (let i = 0; i < sd.length; i++) od[i] += sd[i]
+      const at = Math.floor(Math.max(0, it.offset || 0) * sr)
+      for (let i = 0; i < sd.length; i++) od[at + i] += sd[i]
     }
     for (let i = 0; i < od.length; i++) {
       const a = Math.abs(od[i])

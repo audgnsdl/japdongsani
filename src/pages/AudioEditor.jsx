@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Icon from '../components/Icon.jsx'
 import Waveform from '../components/Waveform.jsx'
+import MixTimeline from '../components/MixTimeline.jsx'
 import { useTheme } from '../theme.jsx'
 import {
   renderRegion,
   concatBuffers,
-  mixBuffers,
+  mixBuffersAt,
   encodeWav,
   encodeMp3,
   downloadBlob,
@@ -141,6 +142,7 @@ export default function AudioEditor() {
           volume: 1,
           fadeIn: 0,
           fadeOut: 0,
+          offset: 0,
           accent: ACCENTS[idRef.current % ACCENTS.length],
         })
       } catch (err) {
@@ -228,20 +230,21 @@ export default function AudioEditor() {
     setBusy(mode === 'mix' ? '겹치는 중…' : '이어붙이는 중…')
     await new Promise((r) => setTimeout(r, 30))
     const ctx = getCtx()
-    const bufs = tracks.map((t) => renderTrackBuffer(t, !useSelection))
-    const out = mode === 'mix' ? mixBuffers(ctx, bufs) : concatBuffers(ctx, bufs)
+    let out
+    if (mode === 'mix') {
+      const items = tracks.map((t) => ({ buffer: renderTrackBuffer(t, !useSelection), offset: t.offset }))
+      out = mixBuffersAt(ctx, items)
+    } else {
+      out = concatBuffers(ctx, tracks.map((t) => renderTrackBuffer(t, !useSelection)))
+    }
     setResult({ buffer: out, base: `${mode === 'mix' ? 'overlay' : 'merged'}_${tracks.length}tracks` })
     setBusy(null)
   }
 
-  const totalDuration = tracks.reduce(
-    (s, t) => s + (useSelection ? t.end - t.start : t.buffer.duration),
-    0,
-  )
-  const maxDuration = tracks.reduce(
-    (m, t) => Math.max(m, useSelection ? t.end - t.start : t.buffer.duration),
-    0,
-  )
+  // 믹스에 들어가는 클립 길이(초)
+  const clipLen = (t) => (useSelection ? t.end - t.start : t.buffer.duration)
+  const totalDuration = tracks.reduce((s, t) => s + clipLen(t), 0)
+  const mixDuration = tracks.reduce((m, t) => Math.max(m, t.offset + clipLen(t)), 0)
 
   return (
     <div className="page">
@@ -467,22 +470,44 @@ export default function AudioEditor() {
 
         {/* 합치기 / 겹치기 */}
         {tracks.length >= 2 && (
-          <div className="merge-bar">
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={useSelection}
-                onChange={(e) => setUseSelection(e.target.checked)}
+          <>
+            <div className="merge-bar">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={useSelection}
+                  onChange={(e) => setUseSelection(e.target.checked)}
+                />
+                <span>선택 구간만 사용 (해제 시 곡 전체)</span>
+              </label>
+              <button className="btn ghost big" onClick={() => combine('concat')}>
+                <Icon name="merge" size={18} /> 이어붙이기 ({formatTime(Math.max(0, totalDuration))})
+              </button>
+            </div>
+
+            <div className="mix-section">
+              <div className="mix-head">
+                <h3>
+                  <Icon name="layers" size={18} /> 겹치기 — 각 트랙 시작 위치
+                </h3>
+                <span>블록을 드래그하거나 왼쪽 숫자(초·ms)로 위치를 맞추세요</span>
+              </div>
+              <MixTimeline
+                tracks={tracks}
+                clipLen={clipLen}
+                offsetOf={(t) => t.offset}
+                onOffset={(id, v) => patch(id, { offset: v })}
               />
-              <span>선택 구간만 사용 (해제 시 곡 전체)</span>
-            </label>
-            <button className="btn ghost big" onClick={() => combine('concat')}>
-              <Icon name="merge" size={18} /> 이어붙이기 ({formatTime(Math.max(0, totalDuration))})
-            </button>
-            <button className="btn big" onClick={() => combine('mix')}>
-              <Icon name="layers" size={18} /> 겹치기 ({formatTime(Math.max(0, maxDuration))})
-            </button>
-          </div>
+              <div className="mix-foot">
+                <span className="merge-info">
+                  믹스 길이 약 <strong>{formatTime(Math.max(0, mixDuration))}</strong>
+                </span>
+                <button className="btn big" onClick={() => combine('mix')}>
+                  <Icon name="layers" size={18} /> 겹쳐서 결과 만들기
+                </button>
+              </div>
+            </div>
+          </>
         )}
 
         {/* 결과 */}
